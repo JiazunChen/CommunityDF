@@ -68,10 +68,10 @@ def normalize(X, norm_values, norm_biases, node_mask):
     return PlaceHolder(X).mask(node_mask)
 
 
-def eval_bimatching_f1(method_name, comms, train_coms, test_coms, eval_seed_num, mode='valid'):
+def eval_bimatching_f1(method_name, comms, train_coms, test_coms, valid_size, mode='valid'):
     avglen = sum([len(com) for com in comms]) / len(comms)
     if mode == 'valid':
-        bf, bj = calu(comms, test_coms[:eval_seed_num])  # +train_coms)
+        bf, bj = calu(comms, test_coms[:valid_size])  # +train_coms)
     elif mode == 'test':
         bf, bj = calu(comms, test_coms + train_coms)
     f, j = calu(train_coms + test_coms, comms)  # +train_coms
@@ -123,7 +123,7 @@ def train(args, graph, train_coms, test_coms, device, message="", features=None)
     args.mean_triangles = float(sum(triangles) / len(triangles))
     args.std_triangles = float((sum((x - args.mean_triangles) ** 2 for x in triangles) / len(triangles)) ** 0.5)
 
-    validdata = Mydata(args.dataset, graph, args.sg_max_size, test_coms[:args.eval_seed_num], 20, mode='test',
+    validdata = Mydata(args.dataset, graph, args.sg_max_size, test_coms[:args.valid_size], 20, mode='test',
                        pos_enc_dim=args.pos_enc_dim, \
                        sample_pagerank=args.sample_pagerank, cache=args.cache,
                        bfs_pagerank=args.bfs_pagerank, \
@@ -210,7 +210,7 @@ def train(args, graph, train_coms, test_coms, device, message="", features=None)
             print(pred_comms.keys())
             for method_name in method_names:
                 method_com = pred_comms[method_name]
-                f1, pre, rec, avglen = f1_score_(method_com, test_coms[:args.eval_seed_num])
+                f1, pre, rec, avglen = f1_score_(method_com, test_coms[:args.valid_size])
                 if avglen <= 3:
                     continue
                 print(
@@ -268,7 +268,7 @@ def initargs(parser):
     parser.add_argument('--dataset', type=str, default='facebook')
     parser.add_argument('--root', type=str, default='datasets')
     parser.add_argument('--train_size', type=int, default=30)
-    parser.add_argument('--eval_seed_num', type=int, default=10)
+    parser.add_argument('--valid_size', type=int, default=10)
     parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--sg_max_size', type=int, default=100)
     parser.add_argument('--eval_epoch', type=int, default=2)
@@ -314,9 +314,9 @@ if __name__ == '__main__':
     else:
         args.feat_dim = 0
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    if args.diffusion_steps !=-1:
+    if args.diffusion_steps ==-1:
         for args.diffusion_steps in range(5,31,5):
-            train(args, graph, train_coms, test_coms, device, features=features
+            train(args, graph, train_coms, test_coms, device, features=features)
     else:
-        train(args, graph, train_coms, test_coms, device, features=features
+        train(args, graph, train_coms, test_coms, device, features=features)
     print('end')
