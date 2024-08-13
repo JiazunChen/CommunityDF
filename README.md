@@ -2,7 +2,6 @@
 code for ICDE25 'CommunityDF: A Guided Conditional Denoising Diffusion Approach for Community Search'
 
 
-~~The code will be ready and released by the March 20th~~
 
 ## Quick Start
 
