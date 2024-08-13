@@ -31,7 +31,7 @@ class Mydata():
     def __init__(self, dataset, graph, subrgaph_size, coms, max_com_size, mode='train',
                  pos_enc_dim=None, shuffle=False, contain_com=False, bfs_pagerank=True, sample_pagerank=None, pool=True,
                  features=None, all_edges=False,
-                 cache=True, alpha=0.85, shortest_path=False):
+                 cache=True, alpha=0.85, shortest_path=False,gcn_use = False):
         # ().__init__()
         self.pool = pool
         self.dataset = dataset
@@ -51,15 +51,18 @@ class Mydata():
         self.cache = cache
         self.all_edges = all_edges
         self.shortest_path = shortest_path
+        self.gcn_use =gcn_use
         self.filename = f'{dataset}_{subrgaph_size}_{len(self.coms)}_{max_com_size}_{mode}_{shuffle}_{pos_enc_dim}_{contain_com}_{bfs_pagerank}_{sample_pagerank}.pt'
-        if self.alpha != 0.85:
-            self.filename = f'{self.alpha}_{self.filename}'
+        if self.alpha!=0.85:
+            self.filename=f'{self.alpha}_{self.filename}'
         if self.features is not None:
-            self.filename = f'True_{self.filename}'
-        if self.all_edges:
-            self.filename = f'True_{self.filename}'
-        if self.shortest_path:
-            self.filename = f'True_{self.filename}'
+            self.filename = f'Truealpha_{self.filename}'
+        if  self.all_edges:
+            self.filename = f'Trueall_edges_{self.filename}'
+        if  self.shortest_path:
+            self.filename = f'Trueshortest_path_{self.filename}'
+        if self.gcn_use:
+            self.filename = f'Truegcn_use_{self.filename}'
         self.datapath = os.path.join('preprocess', self.filename)
         global myglobalgraph
         myglobalgraph = self.graph

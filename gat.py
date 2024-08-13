@@ -207,3 +207,24 @@ class PredictComsize(nn.Module):
         newnodeemd = nodeemd
         predX = self.mlp(newnodeemd)
         return predX
+
+from dgl.nn import GraphConv
+class GCN(nn.Module):
+    def __init__(self, in_feats, hidden_feats, num_classes,dropout = 0.0):
+        super(GCN, self).__init__()
+        self.conv1 = GraphConv(in_feats, hidden_feats)
+        self.conv2 = GraphConv(hidden_feats, hidden_feats)
+        self.classify =  nn.Sequential(
+            make_linear_block(hidden_feats, hidden_feats, nn.ReLU, None, dropout=dropout),
+            make_linear_block(hidden_feats, num_classes, None, None, dropout=dropout),
+        )
+        self.sumpool = SumPooling()
+        self.num_classes = num_classes
+
+    def forward(self, g, features,seeds):
+        x = F.relu(self.conv1(g, features))
+        x = F.relu(self.conv2(g, x))
+        if self.num_classes == 1:
+            #x = self.sumpool(g, x)
+            x = x[seeds]
+        return self.classify(x)

@@ -47,6 +47,32 @@ class DenoisingDiffusion(nn.Module):
             make_linear_block(output, 1, None, None, dropout=dropout),
         )
 
+    def get_emd(self, graph, X, Seed, T, D, C):
+        graph = graph.to(self.device)
+        X = self.node_embedding(X.to(self.device))
+        Seed = self.seed_embedding(Seed.to(self.device))
+        T = self.time_embedding(T.to(self.device))
+        D = self.degree_embedding(D.to(self.device))
+        C = self.cluster_embedding(C.to(self.device))
+        input_X = X + Seed + T + D + C
+        if self.args.competitor is not None:
+            pg_embedding = self.pg_embedding(graph.ndata['pg'].reshape(-1, 1))
+            input_X += pg_embedding
+
+        if self.args.pos_enc_dim:
+            Pos = self.pos_embedding(graph.ndata['lap_pe'])
+            input_X += Pos
+
+        if self.args.feat_dim != 0:
+            nodefeat = graph.ndata['feat'].float()
+            nodefeat = self.feat_embedding(nodefeat.to(self.device))
+            input_X += nodefeat
+
+        nodeemd = self.gat(graph, input_X)
+        # print(nodeemd.shape)
+
+        return nodeemd
+
     def forward(self, graph, X, Seed, T, D, C):
         graph = graph.to(self.device)
         X = self.node_embedding(X.to(self.device))

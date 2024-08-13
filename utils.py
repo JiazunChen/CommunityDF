@@ -35,6 +35,33 @@ def eval(args, model, dataloader, initmap, method_names, Discriminative_model, p
                 pred_comms[method_name].extend(get_com(args, seeds, sg, probx, batch, method_name))
     return pred_comms
 
+def f1_score_(comm_find, comm):
+    avglen = sum([len(com) for com in comm_find]) / len(comm_find) if comm_find else 0
+    total_precision = 0
+    total_recall = 0
+    total_f1 = 0
+    for predicted, ground_truth in zip(comm_find, comm):
+        true_positives = len(set(predicted) & set(ground_truth))
+        p = true_positives / len(predicted) if predicted else 0
+        r = true_positives / len(ground_truth) if ground_truth else 0
+        f1 = 2 * p * r / (p + r) if (p + r) else 0
+        total_precision += p
+        total_recall += r
+        total_f1 += f1
+    avg_precision = total_precision / len(comm_find) if comm_find else 0
+    avg_recall = total_recall / len(comm_find) if comm_find else 0
+    avg_f1 = total_f1 / len(comm_find) if comm_find else 0
+    return avg_f1, avg_precision, avg_recall, avglen
+
+def eval_bimatching_f1(method_name, comms, train_coms, test_coms, valid_size, mode='valid'):
+    avglen = sum([len(com) for com in comms]) / len(comms)
+    if mode == 'valid':
+        bf, bj = calu(comms, test_coms[:valid_size])  # +train_coms)
+    elif mode == 'test':
+        bf, bj = calu(comms, test_coms + train_coms)
+    f, j = calu(train_coms + test_coms, comms)  # +train_coms
+
+    return f, bf, avglen, j, bj
 
 def get_com(args, seeds, sg, probx, batch, method_name, predsize=[0]):
     comms = []

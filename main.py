@@ -15,10 +15,49 @@ from diffusion_model import DenoisingDiffusion, my_one_hot, PredictComsize, to_d
 from utils import eval,set_seed,initialize_from_checkpoint,save_model
 import numpy as np
 import json
+from locator import Locator
+
+def tensor_normalize(x, axis=-1):
+    x = 1. * x / (torch.norm(x, 2, axis, keepdim=True).expand_as(x) + 1e-12)
+    return x
+
+def fast_info_nce_loss_emd(pred, labels, T, graph_indices, k, m, tau=0.1,selected_graphs_ratio=0.2):
+    n = pred.shape[0]
+    pred = pred.view(n, -1)
+    labels = labels.view(n, -1)
+    T = T.view(n, -1)
+    allindex = torch.where(T<1)[0]
+    sample_index = allindex
+
+    cos_sim_matrix = torch.mm(tensor_normalize(pred), tensor_normalize(labels).T)
+    sample_graph_indices = graph_indices[sample_index]
+    same_graph_mask = (graph_indices.unsqueeze(0) == sample_graph_indices.unsqueeze(1)).float()
+    other_graph_mask = (graph_indices.unsqueeze(0) != sample_graph_indices.unsqueeze(1)).float()
+    rand_same = torch.rand((len(sample_index), n), device=pred.device)
+    rand_other = torch.rand((len(sample_index), n), device=pred.device)
+    same_graph_sorted = torch.argsort(rand_same * same_graph_mask + (1 - same_graph_mask) * float('1e9'), dim=1)
+    other_graph_sorted = torch.argsort(rand_other * other_graph_mask + (1 - other_graph_mask) * float('1e9'), dim=1)
+
+    # Select top k and m indices for negatives
+    same_graph_negatives = same_graph_sorted[:, :k]
+    other_graph_negatives = other_graph_sorted[:, :m]
+    negative_indices = torch.cat((same_graph_negatives, other_graph_negatives), dim=1)
+    negative_pairs = cos_sim_matrix[sample_index.unsqueeze(1), negative_indices]
+    positive_pairs = cos_sim_matrix[sample_index, sample_index].unsqueeze(1)
+
+    positive_exp = torch.exp(positive_pairs / tau)
+    negative_exp = torch.exp(negative_pairs / tau)
+    denominator = positive_exp + negative_exp.sum(dim=1, keepdim=True)
+    pair_loss = -torch.log(positive_exp / denominator).squeeze(1)
+    weighted_loss = T[sample_index].view(-1) * pair_loss
+    loss = weighted_loss.sum() / len(sample_index)
+    return loss
 
 
-def train_step(model, batch, device, Discriminative_model=None, pre_model=None):
+def train_step(model, batch, device, Discriminative_model=None, pre_model=None, valid=False):
     batch['graph'].ndata['x'] = my_one_hot(batch['graph'].ndata['x'], 1).float()
+    num_nodes_per_graph = batch['graph'].batch_num_nodes()
+    graph_indices = torch.repeat_interleave(torch.arange(len(num_nodes_per_graph)), num_nodes_per_graph).to(device)
     batch['graph'] = batch['graph'].to(device)
     dense_data, node_mask = to_dense(batch, batch['graph'].ndata['x'])
     X = dense_data.X.to(device)
@@ -60,6 +99,18 @@ def train_step(model, batch, device, Discriminative_model=None, pre_model=None):
     predX = model(batch['graph'], inputX, inputS, inputT, inputD, inputC)
     # print(predX.dtype,noisy_data['epsX'].dtype)
     loss = F.mse_loss(predX, noisy_data['epsX'][node_mask].to(device).float())
+    if model.args.contrast_loss and not valid:
+        noisy_data_sample = model.apply_noise(X, node_mask, pg)
+        sample_inputT = noisy_data_sample['t'].repeat(1, noisy_data_sample['X_t'].shape[1])[node_mask].float().view(-1, 1)
+        sample_inputX = noisy_data_sample['X_t'][node_mask].float().view(-1, 1)
+        sample_emd = model.get_emd(batch['graph'], sample_inputX, inputS, sample_inputT, inputD, inputC)
+        pred_emd = model.get_emd(batch['graph'], inputX, inputS, inputT, inputD, inputC)
+        closs =  model.args.contrast_alpah*fast_info_nce_loss_emd(pred_emd, sample_emd, (1-torch.abs(sample_inputT-inputT)), graph_indices,
+                                                         model.args.contrast_negative_sample_in_graph, model.args.contrast_negative_sample_out_graph,
+                                                         model.args.contrast_tau,1).view(loss.shape)
+
+        print('Contrast_loss',closs)
+        loss += closs
     return loss
 
 
@@ -111,7 +162,7 @@ def train(args, graph, train_coms, test_coms, device, message="", features=None)
         os.mkdir(args.save_path)
 
     st = time()
-    traindata = Mydata(args.dataset, graph, args.sg_max_size, train_coms, 20, pos_enc_dim=args.pos_enc_dim,
+    traindata = Mydata(args.dataset, graph, args.sg_max_size, train_coms[args.locator_train_size:], 20, pos_enc_dim=args.pos_enc_dim,
                        shuffle=args.data_shuffle, \
                        sample_pagerank=args.sample_pagerank, cache=args.cache,
                        bfs_pagerank=args.bfs_pagerank, \
@@ -122,7 +173,11 @@ def train(args, graph, train_coms, test_coms, device, message="", features=None)
     triangles = torch.tensor(triangles)
     args.mean_triangles = float(sum(triangles) / len(triangles))
     args.std_triangles = float((sum((x - args.mean_triangles) ** 2 for x in triangles) / len(triangles)) ** 0.5)
-
+    gcntraindata = Mydata(args.dataset, graph, args.sg_max_size, train_coms[:args.locator_train_size]*args.locator_shuffle_time, 20, pos_enc_dim=args.pos_enc_dim,
+                          shuffle=True,  \
+                           sample_pagerank=args.sample_pagerank, cache=args.cache,
+                           bfs_pagerank=args.bfs_pagerank, \
+                           features=features, gcn_use=True)
     validdata = Mydata(args.dataset, graph, args.sg_max_size, test_coms[:args.valid_size], 20, mode='test',
                        pos_enc_dim=args.pos_enc_dim, \
                        sample_pagerank=args.sample_pagerank, cache=args.cache,
@@ -200,7 +255,7 @@ def train(args, graph, train_coms, test_coms, device, message="", features=None)
         with torch.no_grad():
             for i, batch in enumerate(loader['valid']):
                 # continue
-                loss = train_step(model, batch, device, Discriminative_model, pre_model)
+                loss = train_step(model, batch, device, Discriminative_model, pre_model,valid=True)
                 allloss += loss.data
             validloss = allloss / (i + 1)
         print(f'valid epoch {e}  validloss {validloss:.4f}  bestvalidloss {best_eval_loss:.4f}')
@@ -262,12 +317,25 @@ def train(args, graph, train_coms, test_coms, device, message="", features=None)
             print(
                 f'{len(method_com):5}  {method_name:25}  bestff {f:.4f} bestbf {bf:.4f} bestf {bif:.4f} bestj {bij:.4f}  bestlen {avglen:.2f} test_time {test_time}\n',
                 file=file)
+    ####Locator
 
+    # gcntraindata = Mydata(args.dataset, graph, args.sg_max_size, train_coms[:args.locator_train_size]*args.locator_shuffle_time, 20, pos_enc_dim=args.pos_enc_dim,
+    #                       shuffle=True,  \
+    #                        sample_pagerank=args.sample_pagerank, cache=args.cache,
+    #                        bfs_pagerank=args.bfs_pagerank, \
+    #                        features=features, gcn_use=True)
+    log= f"size {args.locator_train_size}*{args.locator_shuffle_time}"
+    print('init gcn')
+    locator = Locator(args,device,train_coms[:args.locator_train_size]*args.locator_shuffle_time,test_coms,gcntraindata,validdata,testdata,model,None,gcn_dropout=args.locator_dropout,gcn_hidden_size=args.locator_hiddensize,log=log)
+    print('init gcn train')
+    locator.train()
+    print('init gcn eavl')
+    locator.eval()
 
 def initargs(parser):
     parser.add_argument('--dataset', type=str, default='facebook')
     parser.add_argument('--root', type=str, default='datasets')
-    parser.add_argument('--train_size', type=int, default=30)
+    parser.add_argument('--train_size', type=int, default=50)
     parser.add_argument('--valid_size', type=int, default=10)
     parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--sg_max_size', type=int, default=100)
@@ -299,7 +367,17 @@ def initargs(parser):
     parser.add_argument('--guided', action='store_true', default=True)
     parser.add_argument('--ori_xc_coefficient', action='store_true', default=False)
     parser.add_argument('--sample_place', type=str, default='all')  # None first nolabel all
-
+    ####
+    parser.add_argument('--contrast_loss', action='store_true', default=True) # None first nolabel all
+    parser.add_argument('--contrast_negative_sample_out_graph', type=int, default=5)
+    parser.add_argument('--contrast_negative_sample_in_graph', type=int, default=5)
+    parser.add_argument('--contrast_alpah', type=float, default=0.1)
+    parser.add_argument('--contrast_tau', type=float, default=1)
+    ####
+    parser.add_argument('--locator_train_size', type=int, default=50) #10 for Facebook
+    parser.add_argument('--locator_shuffle_time', type=int, default=3)
+    parser.add_argument('--locator_dropout', type=float, default=0)
+    parser.add_argument('--locator_hiddensize', type=int, default=64)
     args = parser.parse_args()
     return args
 
