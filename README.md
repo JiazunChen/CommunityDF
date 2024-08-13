@@ -1,7 +1,8 @@
 # CommunityDF
-code for vldb24 'CommunityDF: A Guided Conditional Denoising Diffusion Approach for Community Search'
+code for ICDE25 'CommunityDF: A Guided Conditional Denoising Diffusion Approach for Community Search'
 
 
+~~The code will be ready and released by the March 20th~~
 
 ## Quick Start
 
@@ -31,14 +32,14 @@ The processed  are stored in `dataset.7z`. Before first use, it is necessary to 
 Default parameters are provided for quick and easy testing across all datasets (`dblp,amazon,youtube,facebook,twitter,lj`):
 
 ```
-python main.py --facebook --train_size 30 --valid_size 10 --locator_train_size 10 --diffusion_steps -1  
+python main.py --dataset facebook --train_size 30 --valid_size 10 --locator_train_size 10 --diffusion_steps -1  
 ## For other datasets, the default values for --train_size, --valid_size, and --locator_train_size are 450, 50, and 50 respectively.  
 ## --diffusion_steps -1 means that the model will search for the best diffusion_step by iterating through [5,30] at intervals of 5
 ```
 
 We can also specify a specific size:
 ```
-python main.py --facebook --train_size 30 --valid_size 10 --locator_train_size 10 --diffusion_steps 10
+python main.py --dataset facebook --train_size 30 --valid_size 10 --locator_train_size 10 --diffusion_steps 10
 ```
 
 
